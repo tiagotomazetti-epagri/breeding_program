@@ -1,0 +1,11 @@
+# virtual environment
+venv/
+
+# database
+db*
+
+# cache files
+__pycache__
+
+# env files
+.env
