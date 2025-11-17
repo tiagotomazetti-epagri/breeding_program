@@ -108,19 +108,30 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
     search_fields = ('name', 'internal_code', 'accession_code')
     autocomplete_fields = ('mother', 'father', 'population', 'mutated_from')
     
+    inlines = [
+        PhenologyObservationInline, 
+        DiseaseReactionInline,
+        ChildrenAsMotherInline,
+        ChildrenAsFatherInline
+    ]
+    
+    actions = [promote_to_selection, promote_to_cultivar]
+
     fieldsets = (
         ('Identificação', {
             'fields': ('name', 'material_type')
         }),
         ('Genealogia', {
-            'description': "<b>Instruções:</b> Preencha a <b>População de Origem</b> para materiais do programa. Preencha <b>Mãe/Pai</b> ou <b>Mutação de</b> para outros materiais.",
-            'fields': (
-                'is_epagri_material',
-                'population',
-                'mother',
-                'father',
-                'mutated_from'
-            )
+            'description': (
+                "<p><b>Instruções de Preenchimento:</b></p>"
+                "<ul>"
+                "<li><b>Para materiais do programa:</b> Preencha <u>apenas</u> o campo 'População de Origem'.</li>"
+                "<li><b>Para materiais externos:</b> Preencha <u>apenas</u> os campos 'Parental (Mãe)' e/ou 'Parental (Pai)'.</li>"
+                "<li><b>Para mutações:</b> Preencha <u>apenas</u> o campo 'Mutação de'.</li>"
+                "</ul>"
+                "<p>O sistema validará os dados e não permitirá combinações inválidas.</p>"
+            ),
+            'fields': ('population', 'mother', 'father', 'mutated_from')
         }),
         ('Status', {
             'fields': ('is_active',)
@@ -128,16 +139,6 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
     )
 
     readonly_fields = ('internal_code', 'accession_code')
-    inlines = [
-        PhenologyObservationInline, 
-        DiseaseReactionInline,
-        ChildrenAsMotherInline,
-        ChildrenAsFatherInline
-    ]
-    actions = [promote_to_selection, promote_to_cultivar]
-
-    class Media:
-        js = ('germoplasm/js/genealogy_logic.js',)
 
 
 @admin.action(description='Selecionar Seedling(s) e promover para Híbrido')

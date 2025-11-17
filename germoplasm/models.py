@@ -152,25 +152,18 @@ class GeneticMaterial(BaseMaterial):
     def clean(self):
         super().clean()
 
-        # Se o usuário marcou a checkbox, o campo população se torna obrigatório.
-        if self.is_epagri_material and not self.population:
-            raise ValidationError({
-                'population': 'Para materiais do programa, a população de origem é obrigatória.'
-            })
-
-        # Se a checkbox não está marcada, o campo população não deve ser preenchido.
-        # A interface (JS) já esconde o campo, mas esta validação previne submissões anormais.
-        if not self.is_epagri_material and self.population:
-            raise ValidationError({
-                'population': 'O campo População só é permitido para materiais do programa (marque a opção "É material do programa?").'
-            })
+        # Conta quantos tipos de origem foram preenchidos
+        origins = [
+            bool(self.population),
+            bool(self.mother or self.father),
+            bool(self.mutated_from)
+        ]
         
-        # As outras validações de conflito (mãe/pai vs mutação, etc.) podem ser removidas
-        # se a interface já separa bem os fluxos, ou mantidas para segurança extra.
-        # Vamos mantê-las por segurança.
-        if (self.mother or self.father) and self.mutated_from:
+        # A função sum() em uma lista de booleanos conta quantos 'True' existem.
+        if sum(origins) > 1:
             raise ValidationError(
-                "Conflito de genealogia: Um material não pode ter parentais e se originar de uma mutação ao mesmo tempo."
+                "Conflito de Genealogia: Preencha apenas um tipo de origem. "
+                "Escolha entre 'População', 'Parentais (Mãe/Pai)' ou 'Mutação de', mas não os combine."
             )
 
         # Validação de Auto-referência
@@ -182,27 +175,30 @@ class GeneticMaterial(BaseMaterial):
         """
         Garante que a genealogia e os códigos sejam salvos corretamente.
         """
-        # A lógica de inferência já foi feita no clean(), mas garantimos aqui também.
+        # Define 'is_epagri_material' com base na única condição possível:
+        # se uma população foi fornecida.
         if self.population:
             self.is_epagri_material = True
             self.mother = self.population.parent1
             self.father = self.population.parent2
-        
-        # A lógica de geração de código no seu modelo parece um pouco complexa, vamos simplificar.
+        else:
+            # Se não há população, garantimos que o material não seja classificado como do programa.
+            self.is_epagri_material = False
+
+        # Lógica de geração de código (mantendo a sua versão simplificada)
         is_new = self._state.adding
         super().save(*args, **kwargs) # Salva primeiro para obter um ID.
 
-        # Geração de código APÓS salvar.
         if is_new and not self.internal_code:
             code_to_set = None
             if self.material_type == self.MaterialType.CULTIVAR:
-                code_to_set = f'C{self.id}' # Usei C maiúsculo como no seu plano original
+                code_to_set = f'C{self.id}'
             elif self.material_type == self.MaterialType.SELECTION:
-                code_to_set = f'S{self.id}' # Usei S maiúsculo
+                code_to_set = f'S{self.id}'
             
             if code_to_set:
                 GeneticMaterial.objects.filter(pk=self.pk).update(internal_code=code_to_set)
-                self.internal_code = code_to_set # Atualiza a instância em memória
+                self.internal_code = code_to_set
     
     class Meta:
         verbose_name = "Material Genético"
