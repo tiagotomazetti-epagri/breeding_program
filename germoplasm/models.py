@@ -1,0 +1,341 @@
+# germoplasm/models.py
+
+from django.db import models
+from django.utils import timezone
+from django.core.exceptions import ValidationError
+
+class BaseMaterial(models.Model):
+    """
+    Abstract base model containing common fields for all material-related models.
+    """
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Ativo?",
+        help_text="Marque se o material está ativo. Desmarque para exclusão lógica."
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        editable=False,
+        verbose_name="Data de Criação"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        editable=False,
+        verbose_name="Última Atualização"
+    )
+
+    class Meta:
+        abstract = True
+
+class Location(models.Model):
+    """Represents a physical location for phenological observations."""
+    name = models.CharField(max_length=255, unique=True, verbose_name="Nome do Local")
+    city = models.CharField(max_length=100, blank=True, verbose_name="Cidade")
+    state = models.CharField(max_length=100, blank=True, verbose_name="Estado")
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "Local"
+        verbose_name_plural = "Locais"
+
+class PhenologicalEvent(models.Model):
+    """Represents a type of phenological event (e.g., Budding, Flowering)."""
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name="Nome do Evento"
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name="Descrição"
+    )
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "Evento Fenológico"
+        verbose_name_plural = "Eventos Fenológicos"
+
+
+class GeneticMaterial(BaseMaterial):
+    """
+    Represents a genetic material in the Germplasm Active Bank (BAG).
+    """
+    class MaterialType(models.TextChoices):
+        CULTIVAR = 'CULTIVAR', 'Cultivar'
+        SELECTION = 'SELECTION', 'Seleção'
+        HYBRID = 'HYBRID', 'Híbrido'
+    
+    name = models.CharField(
+        max_length=255,
+        verbose_name="Nome / Designação",
+        help_text="Nome comercial ou designação do material (ex. Gala, Fuji, M5)."
+    )
+    material_type = models.CharField(
+        max_length=10,
+        choices=MaterialType.choices,
+        verbose_name="Tipo de Material"
+    )
+    internal_code = models.CharField(
+        max_length=50,
+        unique=True,
+        blank=True,
+        null=True,
+        editable=False,
+        verbose_name="Código Interno",
+        help_text="Código sequencial gerado para linhagens e cultivares (ex: L1, C5)."
+    )
+    accession_code = models.CharField(
+        max_length=100,
+        unique=True,
+        blank=True,
+        null=True,
+        editable=False,
+        verbose_name="Código de Acesso (Híbrido)",
+        help_text="Código gerado para Híbridos e mantido em suas evoluções (ex. C1xL5A25H1)."
+    )
+
+    mother = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children_as_mother',
+        verbose_name="Parental (Mãe)"
+    )
+    father = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children_as_father',
+        verbose_name="Parental (Pai)"
+    )
+
+    is_epagri_material = models.BooleanField(
+        default=False,
+        verbose_name="É material do programa da Epagri?",
+        help_text="Marque esta opção se o material foi gerado a partir de uma população do programa" \
+        " de melhoramento genético da EPAGRI."
+    )
+    
+    population = models.ForeignKey(
+        'Population',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='generated_hybrids',
+        verbose_name="População de Origem"
+    )
+
+    mutated_from = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="mutations",
+        verbose_name="Mudatão de",
+        help_text="Selecione o material genético original se este for uma mutação."
+    )
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.get_display_code()})"
+    
+    def get_display_code(self) -> str:
+        if self.material_type == self.MaterialType.HYBRID:
+            return self.accession_code or self.name
+        return self.internal_code or self.name
+    
+    def clean(self):
+        super().clean()
+
+        # Se o usuário marcou a checkbox, o campo população se torna obrigatório.
+        if self.is_epagri_material and not self.population:
+            raise ValidationError({
+                'population': 'Para materiais do programa, a população de origem é obrigatória.'
+            })
+
+        # Se a checkbox não está marcada, o campo população não deve ser preenchido.
+        # A interface (JS) já esconde o campo, mas esta validação previne submissões anormais.
+        if not self.is_epagri_material and self.population:
+            raise ValidationError({
+                'population': 'O campo População só é permitido para materiais do programa (marque a opção "É material do programa?").'
+            })
+        
+        # As outras validações de conflito (mãe/pai vs mutação, etc.) podem ser removidas
+        # se a interface já separa bem os fluxos, ou mantidas para segurança extra.
+        # Vamos mantê-las por segurança.
+        if (self.mother or self.father) and self.mutated_from:
+            raise ValidationError(
+                "Conflito de genealogia: Um material não pode ter parentais e se originar de uma mutação ao mesmo tempo."
+            )
+
+        # Validação de Auto-referência
+        if self.pk:
+            if self.mother_id == self.pk or self.father_id == self.pk or self.mutated_from_id == self.pk:
+                raise ValidationError("Um material não pode ser seu próprio parental ou origem de mutação.")
+
+    def save(self, *args, **kwargs):
+        """
+        Garante que a genealogia e os códigos sejam salvos corretamente.
+        """
+        # A lógica de inferência já foi feita no clean(), mas garantimos aqui também.
+        if self.population:
+            self.is_epagri_material = True
+            self.mother = self.population.parent1
+            self.father = self.population.parent2
+        
+        # A lógica de geração de código no seu modelo parece um pouco complexa, vamos simplificar.
+        is_new = self._state.adding
+        super().save(*args, **kwargs) # Salva primeiro para obter um ID.
+
+        # Geração de código APÓS salvar.
+        if is_new and not self.internal_code:
+            code_to_set = None
+            if self.material_type == self.MaterialType.CULTIVAR:
+                code_to_set = f'C{self.id}' # Usei C maiúsculo como no seu plano original
+            elif self.material_type == self.MaterialType.SELECTION:
+                code_to_set = f'S{self.id}' # Usei S maiúsculo
+            
+            if code_to_set:
+                GeneticMaterial.objects.filter(pk=self.pk).update(internal_code=code_to_set)
+                self.internal_code = code_to_set # Atualiza a instância em memória
+    
+    class Meta:
+        verbose_name = "Material Genético"
+        verbose_name_plural = "Materiais Genéticos (BAG)"
+        ordering = ['name']
+
+
+class Population(BaseMaterial):
+    """
+    Represents a population created from a cross between two genetic materials.
+    """
+    code = models.CharField(
+        max_length=100,
+        unique=True,
+        blank=True,
+        editable=False,
+        verbose_name="Código da População"
+    )
+    parent1 = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.PROTECT,
+        related_name='population_as_parent1',
+        verbose_name="Parental 1"
+    )
+    parent2 = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.PROTECT,
+        related_name='population_as_parent2',
+        verbose_name="Parental 2"
+    )
+    cross_date = models.DateField(
+        default=timezone.now,
+        verbose_name="Data do Cruzamento"
+    )
+    seedling_quantity = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Quantidade de Seedlings",
+        help_text="Número total de seedlings gerados nesta população."
+    )
+
+    def __str__(self) -> str:
+        return self.code or f"Cruzamento de {self.parent1.name} x {self.parent2.name}"
+    
+    def clean(self):
+        if not self.parent1_id or not self.parent2_id:
+            raise ValidationError(
+                "Os parentais devem ser selecionados e salvos antes de criar uma população."
+            )
+
+    def save(self, *args, **kwargs) -> None:
+        if not self.code:
+            self.full_clean()
+            year_suffix = self.cross_date.strftime('%y')
+            p1_code = self.parent1.get_display_code()
+            p2_code = self.parent2.get_display_code()
+            self.code = f"{p1_code}X{p2_code}A{year_suffix}"
+        
+        super().save(*args, **kwargs)
+    
+    class Meta:
+        verbose_name = "População"
+        verbose_name_plural = "Populações"
+        ordering = ['-cross_date']
+
+
+class PhenologyObservation(BaseMaterial):
+    """Records a specific phenological observation for a genetic material."""
+    genetic_material = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.CASCADE,
+        related_name='phenology_observations',
+        verbose_name="Material Genético"
+    )
+    location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        verbose_name="Local da Observação"
+    )
+    event = models.ForeignKey(
+        PhenologicalEvent,
+        on_delete=models.PROTECT,
+        verbose_name="Evento Fenológico"
+    )
+    observation_date = models.DateField(
+        default=timezone.now,
+        verbose_name="Data da Observação"
+    )
+
+    def __str__(self):
+        return f"{self.genetic_material.name} - {self.event.name} em {self.observation_date.strftime('%d/%m/%Y')}"
+
+    class Meta:
+        verbose_name = "Observação Fenológica"
+        verbose_name_plural = "Observações Fenológicas"
+        ordering = ['-observation_date']
+
+
+class DiseaseReaction(BaseMaterial):
+    """
+    Records the reaction of a genetic material to a specific disease.
+    """
+    class ReactionLevel(models.TextChoices):
+        RESISTANT = 'R', 'Resistente'
+        MODERATELY_RESISTANT = 'MR', 'Moderadamente Resistente'
+        MODERATELY_SUSCEPTIBLE = 'MS', 'Moderadamente Suscetível'
+        SUSCEPTIBLE = 'S', 'Suscetível'
+    
+    genetic_material = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.CASCADE,
+        related_name='disease_reactions',
+        verbose_name="Material Genético"
+    )
+    disease_name = models.CharField(
+        max_length=255,
+        verbose_name="Nome da Doença"
+    )
+    reaction = models.CharField(
+        max_length=2,
+        choices=ReactionLevel.choices,
+        blank=True,
+        verbose_name="Reação"
+    )
+
+    def __str__(self) -> str:
+        return f"{self.genetic_material.name} - {self.disease_name}: {self.get_reaction_display()}"
+    
+    class Meta:
+        verbose_name = "Reação a Doença"
+        verbose_name_plural = "Reações a Doenças"
+        constraints = [
+            models.UniqueConstraint(
+                fields=['genetic_material', 'disease_name'],
+                name='unique_reaction_per_material_disease'
+            )
+        ]
