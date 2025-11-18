@@ -149,27 +149,43 @@ class GeneticMaterial(BaseMaterial):
             return self.accession_code or self.name
         return self.internal_code or self.name
     
+    def _clean_register(self) -> None:
+            # Conta quantos tipos de origem foram preenchidos
+            origins = [
+                bool(self.population),
+                bool(self.mother or self.father),
+                bool(self.mutated_from)
+            ]
+            
+            # A função sum() em uma lista de booleanos conta quantos 'True' existem.
+            if sum(origins) > 1:
+                raise ValidationError(
+                    "Conflito de Genealogia: Preencha apenas um tipo de origem. "
+                    "Escolha entre 'População', 'Parentais (Mãe/Pai)' ou 'Mutação de', mas não os combine."
+                )
+
+            # Validação de Auto-referência
+            if self.pk:
+                if self.mother_id == self.pk or self.father_id == self.pk or self.mutated_from_id == self.pk:
+                    raise ValidationError("Um material não pode ser seu próprio parental ou origem de mutação.")
+                
+    def _clean_update(self) -> None:
+        if (
+            self.mother_id != self.population.parent1_id or
+            self.father_id != self.population.parent2_id
+        ):
+            raise ValidationError(
+                "Conflito na Edição: Os parentais (Mãe/Pai) não correspondem à População de Origem Selecionada. "
+                "Para materiais do programa, a genealogia é definida pela população e não deve ser alterada manualmente"
+            )
+
     def clean(self):
         super().clean()
 
-        # Conta quantos tipos de origem foram preenchidos
-        origins = [
-            bool(self.population),
-            bool(self.mother or self.father),
-            bool(self.mutated_from)
-        ]
-        
-        # A função sum() em uma lista de booleanos conta quantos 'True' existem.
-        if sum(origins) > 1:
-            raise ValidationError(
-                "Conflito de Genealogia: Preencha apenas um tipo de origem. "
-                "Escolha entre 'População', 'Parentais (Mãe/Pai)' ou 'Mutação de', mas não os combine."
-            )
-
-        # Validação de Auto-referência
-        if self.pk:
-            if self.mother_id == self.pk or self.father_id == self.pk or self.mutated_from_id == self.pk:
-                raise ValidationError("Um material não pode ser seu próprio parental ou origem de mutação.")
+        if not self.pk:
+            self._clean_register()
+        else:
+            self._clean_update()
 
     def save(self, *args, **kwargs):
         """
@@ -217,6 +233,13 @@ class Population(BaseMaterial):
         editable=False,
         verbose_name="Código da População"
     )
+    seplan_code = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        editable=True,
+        verbose_name="Códio do projeto no Seplan"
+    )
     parent1 = models.ForeignKey(
         GeneticMaterial,
         on_delete=models.PROTECT,
@@ -233,10 +256,34 @@ class Population(BaseMaterial):
         default=timezone.now,
         verbose_name="Data do Cruzamento"
     )
-    seedling_quantity = models.PositiveIntegerField(
+    flowers_quantity = models.PositiveBigIntegerField(
         default=0,
-        verbose_name="Quantidade de Seedlings",
+        verbose_name="Quantidade de flores polinizadas",
+        help_text="Número total de flores emasculadas e polinizadas para esta população."
+    )
+    fruit_quantity = models.PositiveBigIntegerField(
+        default=0,
+        verbose_name="Quantidade de frutos gerados",
+        help_text="Número total de frutos gerados a partir das flores polinizadas."
+    )
+    seed_quantity = models.PositiveBigIntegerField(
+        default=0,
+        verbose_name="Quantidade de sementes coletadas",
+        help_text="Número total de sementes coletadas a partir dos frutos obtidos no cruzamento"
+    )
+    greenhouse_seedling_quantity = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Quantidade de Seedlings na estufa",
         help_text="Número total de seedlings gerados nesta população."
+    )
+    field_seedling_quantity = models.PositiveBigIntegerField(
+        default=0,
+        verbose_name="Quantidade de seedlings a campo",
+        help_text="Número total de seedlings que foram transplantados a campo"
+    )
+    observations = models.TextField(
+        blank=True,
+        verbose_name="Observações"
     )
 
     def __str__(self) -> str:

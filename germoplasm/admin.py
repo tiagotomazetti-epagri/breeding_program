@@ -1,10 +1,8 @@
 # Imports do Django
 from django.contrib import admin, messages
-from django.db.models import Max#, IntegerField
-# from django.db.models.functions import Cast, StrIndex
-from django.shortcuts import render, redirect
-from django.urls import path, reverse
-# from django.utils.html import format_html
+from django.utils.translation import gettext_lazy as _
+from django.db.models import Max
+from django.template.loader import render_to_string
 
 # Imports locais
 from .models import (
@@ -37,17 +35,46 @@ class ChildrenAsFatherInline(admin.TabularInline):
 
 class DiseaseReactionInline(admin.TabularInline):
     model = DiseaseReaction
-    extra = 1
+    extra = 0
     verbose_name = "Reação a Doença"
     verbose_name_plural = "Reações a Doenças"
 
 class PhenologyObservationInline(admin.TabularInline):
     model = PhenologyObservation
-    extra = 1
+    extra = 0
     autocomplete_fields = ('location', 'event')
     verbose_name = "Observação Fenológica"
     verbose_name_plural = "Observações Fenológicas"
 
+
+class SeplanCodeListFilter(admin.SimpleListFilter):
+    """
+    Este filtro permite ao usuário digitar um código Seplan para buscar populações.
+    Ele renderiza um campo de texto em vez de uma lista de opções.
+    """
+    # Título que aparecerá na barra lateral do admin.
+    title = _('Código Seplan') # Usando gettext_lazy para tradução
+
+    # Parâmetro que será usado na URL (ex: ?seplan_code=XYZ).
+    parameter_name = 'seplan_code'
+    template = "admin/textinput_filter.html"
+
+    def lookups(self, request, model_admin):
+        """
+        Não retorna uma lista de opções, pois o usuário vai digitar.
+        Este método é obrigatório e deve retornar uma tupla ou lista vazia.
+        """
+        return []
+
+    def queryset(self, request, queryset):
+        """
+        Filtra o queryset com base no valor fornecido pelo usuário na URL.
+        """
+        if self.value():
+            # Usando __icontains para uma busca case-insensitive.
+            return queryset.filter(seplan_code__icontains=self.value())
+        return queryset
+    
 
 @admin.action(description='Promover Híbrido(s) selecionado(s) para Seleção(ões)')
 def promote_to_selection(modeladmin, request, queryset):
@@ -104,7 +131,7 @@ def promote_to_cultivar(modeladmin, request, queryset):
 @admin.register(GeneticMaterial)
 class GeneticMaterialAdmin(admin.ModelAdmin):
     list_display = ('name', 'get_display_code', 'material_type', 'is_active')
-    list_filter = ('material_type', 'is_active')
+    list_filter = ('material_type', 'is_active', 'is_epagri_material')
     search_fields = ('name', 'internal_code', 'accession_code')
     autocomplete_fields = ('mother', 'father', 'population', 'mutated_from')
     
@@ -188,9 +215,15 @@ def promote_seedling_to_hybrid(modeladmin, request, queryset):
 
 @admin.register(Population)
 class PopulationAdmin(admin.ModelAdmin):
-    list_display = ('code', 'parent1', 'parent2', 'cross_date', 'seedling_quantity')
-    list_filter = ('cross_date',)
-    search_fields = ('code',)
+    list_display = (
+        'code', 'seplan_code', 'parent1', 'parent2', 'cross_date', 
+        'flowers_quantity', 'fruit_quantity', 'seed_quantity'
+    )
+    list_filter = (
+        'cross_date',
+        SeplanCodeListFilter,
+    )
+    search_fields = ('code', 'seplan_code')
     autocomplete_fields = ('parent1', 'parent2')
     readonly_fields = ('code',)
     actions = [promote_seedling_to_hybrid]
