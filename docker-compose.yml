@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  web:
+    # Constrói a imagem a partir do Dockerfile no diretório atual ('.').
+    build: .
+    # O comando que inicia o servidor (sobrescreve o CMD do Dockerfile, se necessário).
+    command: python manage.py runserver 0.0.0.0:8000
+    # Mapeia a porta 8000 do container para a porta 8000 da sua máquina.
+    ports:
+      - "8000:8000"
+    # Monta o diretório atual do seu projeto (no Windows) dentro do diretório /app do container.
+    # Esta é a parte mais importante: qualquer mudança que você fizer no seu código no Windows
+    # será refletida instantaneamente dentro do container Linux.
+    volumes:
+      - .:/app
