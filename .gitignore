@@ -1,11 +1,20 @@
-# virtual environment
-venv/
-
 # database
 db*
 
-# cache files
+# cache files or pyc
 __pycache__
+*.pyc
 
 # env files
+venv/
 .env
+
+# meida files
+/media/
+
+# static files
+/static/
+
+# OS files
+.DS_Store
+Thumbs.db

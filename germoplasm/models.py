@@ -1,8 +1,9 @@
-# germoplasm/models.py
-
+import os
+import uuid
 from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from django.utils.text import slugify
 
 class BaseMaterial(models.Model):
     """
@@ -59,6 +60,18 @@ class PhenologicalEvent(models.Model):
         verbose_name = "Evento Fenológico"
         verbose_name_plural = "Eventos Fenológicos"
 
+def genetic_material_photo_path(instance, filename):
+    """
+    Gera um caminho de arquivo limpo e único usando o nome do material.
+    Exemplo: genetic_material_photos/gala-fuji/gala-fuji_a8b1.jpg
+    """
+    genetic_material = instance.genetic_material
+
+    ext = os.path.splitext(filename)[1]
+    safe_name = slugify(genetic_material.name)
+    unique_suffix = uuid.uuid4().hex[:8]
+    new_filename = f"{safe_name}_{unique_suffix}{ext}"
+    return os.path.join('genetic_material_photos', str(genetic_material.id), new_filename)
 
 class GeneticMaterial(BaseMaterial):
     """
@@ -170,11 +183,12 @@ class GeneticMaterial(BaseMaterial):
                     raise ValidationError("Um material não pode ser seu próprio parental ou origem de mutação.")
                 
     def _clean_update(self) -> None:
-        if (
-            self.mother_id != self.population.parent1_id or
-            self.father_id != self.population.parent2_id
-        ):
-            raise ValidationError(
+        if self.population:
+            if (
+                self.mother_id != self.population.parent1_id or
+                self.father_id != self.population.parent2_id
+            ):
+                raise ValidationError(
                 "Conflito na Edição: Os parentais (Mãe/Pai) não correspondem à População de Origem Selecionada. "
                 "Para materiais do programa, a genealogia é definida pela população e não deve ser alterada manualmente"
             )
@@ -382,3 +396,31 @@ class DiseaseReaction(BaseMaterial):
                 name='unique_reaction_per_material_disease'
             )
         ]
+
+class GeneticMaterialPhoto(BaseMaterial):
+    """
+    Representa uma única foto associada a um GeneticMaterial
+    """
+    genetic_material = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.CASCADE,
+        related_name='photos',
+        verbose_name="Material Genético",    
+    )
+    image = models.ImageField(
+        upload_to=genetic_material_photo_path,
+        verbose_name="Imagem"
+    )
+    caption = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name="Legenda",
+        help_text="Descrição opcional da foto (ex: 'Fruto em ponto de colheita')."
+    )
+
+    def __str__(self):
+        return f"Foto de {self.genetic_material.name}"
+
+    class Meta:
+        verbose_name = "Foto de Material Genético"
+        verbose_name_plural = "Fotos de Materiais Genéticos"
