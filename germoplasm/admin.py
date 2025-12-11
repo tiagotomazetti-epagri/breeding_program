@@ -1,8 +1,11 @@
 # Imports do Django
 from django.contrib import admin, messages
-from django.utils.translation import gettext_lazy as _
+from django.db import transaction
 from django.db.models import Max
-from django.template.loader import render_to_string
+from django.http import HttpResponseRedirect
+from django.shortcuts import render, redirect
+from django.urls import path, reverse
+from django.utils.translation import gettext_lazy as _
 
 # Imports locais
 from .models import (
@@ -14,6 +17,7 @@ from .models import (
     PhenologyObservation,
     Population,
 )
+from .forms import MutationCreationForm
 from . import services
 
 class GeneticMaterialPhotoInline(admin.TabularInline):
@@ -143,7 +147,7 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
         ChildrenAsFatherInline
     ]
     
-    actions = [promote_to_selection, promote_to_cultivar]
+    actions = ['create_mutation_action', promote_to_selection, promote_to_cultivar]
 
     fieldsets = (
         ('Identificação', {
@@ -155,11 +159,13 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
                 "<ul>"
                 "<li><b>Para materiais do programa:</b> Preencha <u>apenas</u> o campo 'População de Origem'.</li>"
                 "<li><b>Para materiais externos:</b> Preencha <u>apenas</u> os campos 'Parental (Mãe)' e/ou 'Parental (Pai)'.</li>"
-                "<li><b>Para mutações:</b> Preencha <u>apenas</u> o campo 'Mutação de'.</li>"
                 "</ul>"
                 "<p>O sistema validará os dados e não permitirá combinações inválidas.</p>"
             ),
-            'fields': ('population', 'mother', 'father', 'mutated_from')
+            'fields': ('population', 'mother', 'father')
+        }),
+        ('Outras Informações', {
+            'fields': ('observations',)
         }),
         ('Status', {
             'fields': ('is_active',)
@@ -167,6 +173,119 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
     )
 
     readonly_fields = ('internal_code', 'accession_code')
+
+    def get_urls(self):
+        """
+        Adiciona as URLs customizadas para o fluxo da criação de mutação.
+        """
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<int:object_id>/create-mutation',
+                self.admin_site.admin_view(self.create_mutation_form_view),
+                name='germoplasm_geneticmaterial_createmutation',
+            ),
+        ]
+        return custom_urls + urls
+    
+    def create_mutation_action(self, request, queryset):
+        """Ação do Admin que inicia o fluxo de criação de mutação."""
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Por favor, selecione exatamente um material para criar uma mutação.",
+                level=messages.WARNING
+            )
+            return None
+        
+        origin_material = queryset.first()
+        return HttpResponseRedirect(
+            reverse(
+                "admin:germoplasm_geneticmaterial_createmutation",
+                args=[origin_material.pk]
+            )
+        )
+    
+    create_mutation_action.short_description = "Cadastrar mutação a partir do material selecionado"
+
+    def create_mutation_form_view(self, request, object_id):
+        """
+        View que exibe o formulário para inserir os dados do novo mutante.
+        """
+        origin_material = self.get_object(request, object_id)
+
+        if request.method == 'POST':
+            form = MutationCreationForm(request.POST)
+            if form.is_valid():
+                try:
+                    with transaction.atomic():
+                        mutation_count = GeneticMaterial.objects.filter(mutated_from=origin_material).count()
+                        next_mutation_num = mutation_count + 1
+                        
+                        origin_code = origin_material.get_display_code()
+                        new_mutation_code = f"{origin_code}M{next_mutation_num}"
+
+                        new_mutant = GeneticMaterial()
+                        new_mutant.material_type = origin_material.material_type
+                        new_mutant.is_active = origin_material.is_active
+                        new_mutant.pk = None
+                        new_mutant._state.adding = True
+
+                        new_mutant.name = form.cleaned_data['new_name']
+                        
+                        new_mutant.mutated_from = origin_material
+                        
+                        new_mutant.accession_code = new_mutation_code
+                        
+                        new_mutant.internal_code = None
+                        new_mutant.population = None
+                        new_mutant.mother = None
+                        new_mutant.father = None
+                        
+                        mutant_char_text = f"CARACTERE MUTANTE: {form.cleaned_data['mutant_character']}"
+                        original_obs = origin_material.observations or ""
+                        if original_obs:
+                            new_mutant.observations = f"{mutant_char_text}\n\n---\n\n{original_obs}"
+                        else:
+                            new_mutant.observations = mutant_char_text
+
+                        new_mutant.save()
+
+                        for reaction in origin_material.disease_reactions.all():
+                            reaction.pk = None
+                            reaction.genetic_material = new_mutant
+                            reaction.save()
+                        
+                        for obs in origin_material.phenology_observations.all():
+                            obs.pk = None
+                            obs.genetic_material = new_mutant
+                            obs.save()
+
+                    self.message_user(
+                        request,
+                        f"Mutante '{new_mutant.name}' com código '{new_mutation_code}' criado com sucesso.",
+                        level=messages.SUCCESS
+                    )
+                    return redirect(reverse('admin:germoplasm_geneticmaterial_changelist'))
+
+                except Exception as e:
+                    self.message_user(
+                        request,
+                        f"Ocorreu um erro ao criar a mutação: {e}",
+                        level=messages.ERROR
+                    )
+                    return redirect(reverse('admin:germoplasm_geneticmaterial_changelist'))
+        else:
+            form = MutationCreationForm()
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': f"Cadastrar Mutação de '{origin_material.name}'",
+            'form': form,
+            'opts': self.model._meta,
+            'origin_material': origin_material,
+        }
+        return render(request, 'admin/germoplasm/create_mutation_form.html', context)
 
 
 @admin.action(description='Selecionar Seedling(s) e promover para Híbrido')

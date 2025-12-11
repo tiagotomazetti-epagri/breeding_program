@@ -154,6 +154,12 @@ class GeneticMaterial(BaseMaterial):
         help_text="Selecione o material genético original se este for uma mutação."
     )
 
+    observations = models.TextField(
+        blank=True,
+        verbose_name="Observações",
+        help_text="Utilize este campo se necessário para adicionar informações uteis sobre o genótipo."
+    )
+
     def __str__(self) -> str:
         return f"{self.name} ({self.get_display_code()})"
     
