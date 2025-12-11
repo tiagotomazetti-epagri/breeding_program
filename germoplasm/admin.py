@@ -80,6 +80,27 @@ class SeplanSearchFilter(admin.SimpleListFilter):
         return queryset
 
 
+class MutationsInline(admin.TabularInline):
+    """
+    Inline para mostrar as mutações originadas a partir deste material.
+    """
+    model = GeneticMaterial
+    fk_name = 'mutated_from'
+
+    fields = ('name', 'material_type', 'get_display_code', 'observations')
+    readonly_fields = ('name', 'material_type', 'get_display_code', 'observations')
+
+    verbose_name = "Mutação Gerada"
+    verbose_name_plural = "Mutações Geradas a Partir deste Material"
+
+    can_delete = False
+    extra = 0
+    max_num = 0
+
+    def has_add_permission(self, request, obj):
+        return False
+
+
 @admin.action(description='Promover Híbrido(s) selecionado(s) para Seleção(ões)')
 def promote_to_selection(modeladmin, request, queryset):
     updated_count = 0
@@ -144,7 +165,8 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
         PhenologyObservationInline, 
         DiseaseReactionInline,
         ChildrenAsMotherInline,
-        ChildrenAsFatherInline
+        ChildrenAsFatherInline,
+        MutationsInline
     ]
     
     actions = ['create_mutation_action', promote_to_selection, promote_to_cultivar]
