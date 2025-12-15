@@ -5,6 +5,19 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.utils.text import slugify
 
+def genetic_material_photo_path(instance, filename):
+    """
+    Gera um caminho de arquivo limpo e único usando o nome do material.
+    Exemplo: genetic_material_photos/gala-fuji/gala-fuji_a8b1.jpg
+    """
+    genetic_material = instance.genetic_material
+
+    ext = os.path.splitext(filename)[1]
+    safe_name = slugify(genetic_material.name)
+    unique_suffix = uuid.uuid4().hex[:8]
+    new_filename = f"{safe_name}_{unique_suffix}{ext}"
+    return os.path.join('genetic_material_photos', str(genetic_material.id), new_filename)
+
 class BaseMaterial(models.Model):
     """
     Abstract base model containing common fields for all material-related models.
@@ -28,50 +41,69 @@ class BaseMaterial(models.Model):
     class Meta:
         abstract = True
 
-class Location(models.Model):
-    """Represents a physical location for phenological observations."""
-    name = models.CharField(max_length=255, unique=True, verbose_name="Nome do Local")
-    city = models.CharField(max_length=100, blank=True, verbose_name="Cidade")
-    state = models.CharField(max_length=100, blank=True, verbose_name="Estado")
-
-    def __str__(self):
-        return self.name
-
-    class Meta:
-        verbose_name = "Local"
-        verbose_name_plural = "Locais"
-
-class PhenologicalEvent(models.Model):
-    """Represents a type of phenological event (e.g., Budding, Flowering)."""
+class Marker(BaseMaterial):
+    """
+    Represents a molecular marker used for identification.
+    """
+    class MarkerType(models.TextChoices):
+        SSR = 'SSR', 'SSR (Microssatélite)'
+        SNP = 'SNP', 'SNP'
+        CAPS = 'CAPS', 'CAPS'
+        OTHER = 'OTHER', 'Outro'
+    
     name = models.CharField(
-        max_length=255,
+        max_length=100,
         unique=True,
-        verbose_name="Nome do Evento"
+        verbose_name="Nome do Marcador"
     )
-    description = models.TextField(
+    marker_type = models.CharField(
+        max_length=10,
+        choices=MarkerType.choices,
+        verbose_name="Tipo de Marcador"
+    )
+    primer_forward = models.CharField(
+        max_length=100,
         blank=True,
-        verbose_name="Descrição"
+        verbose_name="Primer Forward"
+    )
+    primer_reverse = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name="Primer Reverse"
+    )
+    pcr_protocol = models.TextField(
+        blank=True,
+        verbose_name="Protocolo de PCR"
+    )
+
+    def __str__(self):
+        verbose_name = "Marcador Molecular"
+        verbose_name_plural = "Marcadores Moleculares"
+
+class S_Allele(BaseMaterial):
+    """
+    Represents an S-allele for self-incompatibility
+    """
+    name = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Nome do Alelo S",
+        help_text="Ex: S1, S2, S3, S9"
+    )
+    markers = models.ManyToManyField(
+        Marker,
+        blank=True,
+        related_name="s_alleles",
+        verbose_name="Marcadores para Identificação"
     )
 
     def __str__(self):
         return self.name
-
+    
     class Meta:
-        verbose_name = "Evento Fenológico"
-        verbose_name_plural = "Eventos Fenológicos"
-
-def genetic_material_photo_path(instance, filename):
-    """
-    Gera um caminho de arquivo limpo e único usando o nome do material.
-    Exemplo: genetic_material_photos/gala-fuji/gala-fuji_a8b1.jpg
-    """
-    genetic_material = instance.genetic_material
-
-    ext = os.path.splitext(filename)[1]
-    safe_name = slugify(genetic_material.name)
-    unique_suffix = uuid.uuid4().hex[:8]
-    new_filename = f"{safe_name}_{unique_suffix}{ext}"
-    return os.path.join('genetic_material_photos', str(genetic_material.id), new_filename)
+        verbose_name = "Alelo S"
+        verbose_name_plural = "Alelos S"
+        ordering = ["name"]
 
 class GeneticMaterial(BaseMaterial):
     """
@@ -119,6 +151,7 @@ class GeneticMaterial(BaseMaterial):
         related_name='children_as_mother',
         verbose_name="Parental (Mãe)"
     )
+
     father = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -152,6 +185,14 @@ class GeneticMaterial(BaseMaterial):
         related_name="mutations",
         verbose_name="Mudatão de",
         help_text="Selecione o material genético original se este for uma mutação."
+    )
+
+    s_alleles = models.ManyToManyField(
+        S_Allele,
+        blank=True,
+        related_name="genetic_materials",
+        verbose_name="Genótipo S (Alelos S)",
+        help_text="Selecione os alelos S que compõem o genótipo deste material"
     )
 
     observations = models.TextField(
@@ -241,6 +282,136 @@ class GeneticMaterial(BaseMaterial):
         verbose_name_plural = "Materiais Genéticos (BAG)"
         ordering = ['name']
 
+class DiseaseReaction(BaseMaterial):
+    """
+    Records the reaction of a genetic material to a specific disease.
+    """
+    class ReactionLevel(models.TextChoices):
+        RESISTANT = 'R', 'Resistente'
+        MODERATELY_RESISTANT = 'MR', 'Moderadamente Resistente'
+        MODERATELY_SUSCEPTIBLE = 'MS', 'Moderadamente Suscetível'
+        SUSCEPTIBLE = 'S', 'Suscetível'
+    
+    genetic_material = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.CASCADE,
+        related_name='disease_reactions',
+        verbose_name="Material Genético"
+    )
+    disease_name = models.CharField(
+        max_length=255,
+        verbose_name="Nome da Doença"
+    )
+    reaction = models.CharField(
+        max_length=2,
+        choices=ReactionLevel.choices,
+        blank=True,
+        verbose_name="Reação"
+    )
+
+    def __str__(self) -> str:
+        return f"{self.genetic_material.name} - {self.disease_name}: {self.get_reaction_display()}"
+    
+    class Meta:
+        verbose_name = "Reação a Doença"
+        verbose_name_plural = "Reações a Doenças"
+        constraints = [
+            models.UniqueConstraint(
+                fields=['genetic_material', 'disease_name'],
+                name='unique_reaction_per_material_disease'
+            )
+        ]
+
+class GeneticMaterialPhoto(BaseMaterial):
+    """
+    Representa uma única foto associada a um GeneticMaterial
+    """
+    genetic_material = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.CASCADE,
+        related_name='photos',
+        verbose_name="Material Genético",    
+    )
+    image = models.ImageField(
+        upload_to=genetic_material_photo_path,
+        verbose_name="Imagem"
+    )
+    caption = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name="Legenda",
+        help_text="Descrição opcional da foto (ex: 'Fruto em ponto de colheita')."
+    )
+
+    def __str__(self):
+        return f"Foto de {self.genetic_material.name}"
+
+    class Meta:
+        verbose_name = "Foto de Material Genético"
+        verbose_name_plural = "Fotos de Materiais Genéticos"
+
+class Location(models.Model):
+    """Represents a physical location for phenological observations."""
+    name = models.CharField(max_length=255, unique=True, verbose_name="Nome do Local")
+    city = models.CharField(max_length=100, blank=True, verbose_name="Cidade")
+    state = models.CharField(max_length=100, blank=True, verbose_name="Estado")
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "Local"
+        verbose_name_plural = "Locais"
+
+class PhenologicalEvent(models.Model):
+    """Represents a type of phenological event (e.g., Budding, Flowering)."""
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name="Nome do Evento"
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name="Descrição"
+    )
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "Evento Fenológico"
+        verbose_name_plural = "Eventos Fenológicos"
+
+class PhenologyObservation(BaseMaterial):
+    """Records a specific phenological observation for a genetic material."""
+    genetic_material = models.ForeignKey(
+        GeneticMaterial,
+        on_delete=models.CASCADE,
+        related_name='phenology_observations',
+        verbose_name="Material Genético"
+    )
+    location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        verbose_name="Local da Observação"
+    )
+    event = models.ForeignKey(
+        PhenologicalEvent,
+        on_delete=models.PROTECT,
+        verbose_name="Evento Fenológico"
+    )
+    observation_date = models.DateField(
+        default=timezone.now,
+        verbose_name="Data da Observação"
+    )
+
+    def __str__(self):
+        return f"{self.genetic_material.name} - {self.event.name} em {self.observation_date.strftime('%d/%m/%Y')}"
+
+    class Meta:
+        verbose_name = "Observação Fenológica"
+        verbose_name_plural = "Observações Fenológicas"
+        ordering = ['-observation_date']
 
 class Population(BaseMaterial):
     """
@@ -329,104 +500,3 @@ class Population(BaseMaterial):
         verbose_name = "População"
         verbose_name_plural = "Populações"
         ordering = ['-cross_date']
-
-
-class PhenologyObservation(BaseMaterial):
-    """Records a specific phenological observation for a genetic material."""
-    genetic_material = models.ForeignKey(
-        GeneticMaterial,
-        on_delete=models.CASCADE,
-        related_name='phenology_observations',
-        verbose_name="Material Genético"
-    )
-    location = models.ForeignKey(
-        Location,
-        on_delete=models.PROTECT,
-        verbose_name="Local da Observação"
-    )
-    event = models.ForeignKey(
-        PhenologicalEvent,
-        on_delete=models.PROTECT,
-        verbose_name="Evento Fenológico"
-    )
-    observation_date = models.DateField(
-        default=timezone.now,
-        verbose_name="Data da Observação"
-    )
-
-    def __str__(self):
-        return f"{self.genetic_material.name} - {self.event.name} em {self.observation_date.strftime('%d/%m/%Y')}"
-
-    class Meta:
-        verbose_name = "Observação Fenológica"
-        verbose_name_plural = "Observações Fenológicas"
-        ordering = ['-observation_date']
-
-
-class DiseaseReaction(BaseMaterial):
-    """
-    Records the reaction of a genetic material to a specific disease.
-    """
-    class ReactionLevel(models.TextChoices):
-        RESISTANT = 'R', 'Resistente'
-        MODERATELY_RESISTANT = 'MR', 'Moderadamente Resistente'
-        MODERATELY_SUSCEPTIBLE = 'MS', 'Moderadamente Suscetível'
-        SUSCEPTIBLE = 'S', 'Suscetível'
-    
-    genetic_material = models.ForeignKey(
-        GeneticMaterial,
-        on_delete=models.CASCADE,
-        related_name='disease_reactions',
-        verbose_name="Material Genético"
-    )
-    disease_name = models.CharField(
-        max_length=255,
-        verbose_name="Nome da Doença"
-    )
-    reaction = models.CharField(
-        max_length=2,
-        choices=ReactionLevel.choices,
-        blank=True,
-        verbose_name="Reação"
-    )
-
-    def __str__(self) -> str:
-        return f"{self.genetic_material.name} - {self.disease_name}: {self.get_reaction_display()}"
-    
-    class Meta:
-        verbose_name = "Reação a Doença"
-        verbose_name_plural = "Reações a Doenças"
-        constraints = [
-            models.UniqueConstraint(
-                fields=['genetic_material', 'disease_name'],
-                name='unique_reaction_per_material_disease'
-            )
-        ]
-
-class GeneticMaterialPhoto(BaseMaterial):
-    """
-    Representa uma única foto associada a um GeneticMaterial
-    """
-    genetic_material = models.ForeignKey(
-        GeneticMaterial,
-        on_delete=models.CASCADE,
-        related_name='photos',
-        verbose_name="Material Genético",    
-    )
-    image = models.ImageField(
-        upload_to=genetic_material_photo_path,
-        verbose_name="Imagem"
-    )
-    caption = models.CharField(
-        max_length=255,
-        blank=True,
-        verbose_name="Legenda",
-        help_text="Descrição opcional da foto (ex: 'Fruto em ponto de colheita')."
-    )
-
-    def __str__(self):
-        return f"Foto de {self.genetic_material.name}"
-
-    class Meta:
-        verbose_name = "Foto de Material Genético"
-        verbose_name_plural = "Fotos de Materiais Genéticos"

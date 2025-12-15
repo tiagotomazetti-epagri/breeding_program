@@ -7,36 +7,19 @@ from django.shortcuts import render, redirect
 from django.urls import path, reverse
 from django.utils.translation import gettext_lazy as _
 
-# Imports locais
 from .models import (
     DiseaseReaction, 
     GeneticMaterial,
     GeneticMaterialPhoto,
     Location,
+    Marker,
     PhenologicalEvent,
     PhenologyObservation,
     Population,
+    S_Allele,
 )
 from .forms import MutationCreationForm
 from . import services
-
-class GeneticMaterialPhotoInline(admin.TabularInline):
-    model = GeneticMaterialPhoto
-    extra = 1
-    fields = ('image', 'caption')
-    verbose_name = "Foto"
-    verbose_name_plural = "Fotos"
-
-class ChildrenAsMotherInline(admin.TabularInline):
-    """Inline para mostrar os filhos onde o material é a mãe."""
-    model = GeneticMaterial
-    fk_name = 'mother'
-    fields = ('name', 'material_type', 'get_display_code')
-    readonly_fields = ('name', 'material_type', 'get_display_code')
-    verbose_name = "Filho (como mãe)"
-    verbose_name_plural = "Filhos (onde este material é a mãe)"
-    can_delete = False
-    extra = 0
 
 class ChildrenAsFatherInline(admin.TabularInline):
     """Inline para mostrar os filhos onde o material é o pai."""
@@ -49,36 +32,41 @@ class ChildrenAsFatherInline(admin.TabularInline):
     can_delete = False
     extra = 0
 
+class ChildrenAsMotherInline(admin.TabularInline):
+    """Inline para mostrar os filhos onde o material é a mãe."""
+    model = GeneticMaterial
+    fk_name = 'mother'
+    fields = ('name', 'material_type', 'get_display_code')
+    readonly_fields = ('name', 'material_type', 'get_display_code')
+    verbose_name = "Filho (como mãe)"
+    verbose_name_plural = "Filhos (onde este material é a mãe)"
+    can_delete = False
+    extra = 0
+
 class DiseaseReactionInline(admin.TabularInline):
     model = DiseaseReaction
     extra = 0
     verbose_name = "Reação a Doença"
     verbose_name_plural = "Reações a Doenças"
 
-class PhenologyObservationInline(admin.TabularInline):
-    model = PhenologyObservation
+class GeneticMaterialPhotoInline(admin.TabularInline):
+    model = GeneticMaterialPhoto
+    extra = 1
+    fields = ('image', 'caption')
+    verbose_name = "Foto"
+    verbose_name_plural = "Fotos"
+
+class GeneticMaterialForSAllelesInline(admin.TabularInline):
+    model = GeneticMaterial.s_alleles.through
     extra = 0
-    autocomplete_fields = ('location', 'event')
-    verbose_name = "Observação Fenológica"
-    verbose_name_plural = "Observações Fenológicas"
-    
+    verbose_name = "Material Genético com este Alelo"
+    verbose_name_plural = "Materiais Genéticos com este Alelo"
+    fields = ('geneticmaterial',)
+    readonly_fields = ('geneticmaterial',)
+    can_delete = False
 
-class SeplanSearchFilter(admin.SimpleListFilter):
-    title = _('Código Seplan')
-    parameter_name = 'seplan_search'
-
-    def lookups(self, request, model_admin):
-        qs = model_admin.get_queryset(
-            request
-        ).exclude(seplan_code__isnull=True).exclude(seplan_code__exact='')
-        unique_codes = qs.values_list('seplan_code', flat=True).order_by('seplan_code').distinct()
-        return [(code, f"Seplan {code}") for code in unique_codes]
-
-    def queryset(self, request, queryset):
-        if self.value():
-            return queryset.filter(seplan_code__exact=self.value())
-        return queryset
-
+    def has_add_permission(self, request, obj):
+        return False
 
 class MutationsInline(admin.TabularInline):
     """
@@ -100,6 +88,29 @@ class MutationsInline(admin.TabularInline):
     def has_add_permission(self, request, obj):
         return False
 
+class PhenologyObservationInline(admin.TabularInline):
+    model = PhenologyObservation
+    extra = 0
+    autocomplete_fields = ('location', 'event')
+    verbose_name = "Observação Fenológica"
+    verbose_name_plural = "Observações Fenológicas"
+    
+class SeplanSearchFilter(admin.SimpleListFilter):
+
+    title = _('Código Seplan')
+    parameter_name = 'seplan_search'
+
+    def lookups(self, request, model_admin):
+        qs = model_admin.get_queryset(
+            request
+        ).exclude(seplan_code__isnull=True).exclude(seplan_code__exact='')
+        unique_codes = qs.values_list('seplan_code', flat=True).order_by('seplan_code').distinct()
+        return [(code, f"Seplan {code}") for code in unique_codes]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(seplan_code__exact=self.value())
+        return queryset
 
 @admin.action(description='Promover Híbrido(s) selecionado(s) para Seleção(ões)')
 def promote_to_selection(modeladmin, request, queryset):
@@ -128,7 +139,6 @@ def promote_to_selection(modeladmin, request, queryset):
             "Nenhum híbrido válido foi selecionado para promoção."
         )
 
-
 @admin.action(description='Promover Seleção(ões) para Cultivar(es)')
 def promote_to_cultivar(modeladmin, request, queryset):
     updated_count = 0
@@ -150,6 +160,49 @@ def promote_to_cultivar(modeladmin, request, queryset):
             f"{updated_count} Seleção(ões) promovida(s) para Cultivar."
         )
 
+@admin.action(description='Selecionar Seedling(s) e promover para Híbrido')
+def promote_seedling_to_hybrid(modeladmin, request, queryset):
+    """
+    Ação do Admin para criar um novo GeneticMaterial (Híbrido) a partir de uma população.
+    """
+    if queryset.count() != 1:
+        messages.error(request, "Por favor, selecione exatamente uma população para esta ação.")
+        return
+
+    population = queryset.first()
+    
+    # 1. Encontra o próximo número sequencial para o híbrido nesta população
+    last_hybrid = population.generated_hybrids.aggregate(
+        max_accession=Max('accession_code')
+    )
+    
+    next_num = 1
+    if last_hybrid['max_accession']:
+        try:
+            # Extrai o número depois de 'H' (ex: C1xL5A25H1 -> 1)
+            last_num_str = last_hybrid['max_accession'].split('H')[-1]
+            next_num = int(last_num_str) + 1
+        except (ValueError, IndexError):
+            # Fallback caso o formato do código seja inesperado
+            pass
+
+    # 2. Gera o código e o nome do novo híbrido
+    new_accession_code = f"{population.code}H{next_num}"
+    
+    # 3. Cria o novo material genético
+    new_hybrid = GeneticMaterial.objects.create(
+        name=new_accession_code, # Nome padrão
+        material_type=GeneticMaterial.MaterialType.HYBRID,
+        accession_code=new_accession_code,
+        population=population,
+        mother=population.parent1, # Assumindo parent1 como mãe, pode ser ajustado
+        father=population.parent2, # Assumindo parent2 como pai
+    )
+    
+    messages.success(
+        request,
+        f"Híbrido {new_hybrid.accession_code} criado com sucesso a partir da população {population.code}."
+    )
 
 # --- Configurações do Admin ---
 
@@ -158,7 +211,7 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
     list_display = ('name', 'get_display_code', 'material_type', 'is_active')
     list_filter = ('material_type', 'is_active', 'is_epagri_material')
     search_fields = ('name', 'internal_code', 'accession_code')
-    autocomplete_fields = ('mother', 'father', 'population', 'mutated_from')
+    autocomplete_fields = ('mother', 'father', 'population', 's_alleles')
     
     inlines = [
         GeneticMaterialPhotoInline,
@@ -185,6 +238,9 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
                 "<p>O sistema validará os dados e não permitirá combinações inválidas.</p>"
             ),
             'fields': ('population', 'mother', 'father')
+        }),
+        ('Genotipagem', {
+            'fields': ('s_alleles',)
         }),
         ('Outras Informações', {
             'fields': ('observations',)
@@ -309,51 +365,24 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
         }
         return render(request, 'admin/germoplasm/create_mutation_form.html', context)
 
+@admin.register(Location)
+class LocationAdmin(admin.ModelAdmin):
+    search_fields = ('name', 'city', 'state')
 
-@admin.action(description='Selecionar Seedling(s) e promover para Híbrido')
-def promote_seedling_to_hybrid(modeladmin, request, queryset):
-    """
-    Ação do Admin para criar um novo GeneticMaterial (Híbrido) a partir de uma população.
-    """
-    if queryset.count() != 1:
-        messages.error(request, "Por favor, selecione exatamente uma população para esta ação.")
-        return
+@admin.register(Marker)
+class MarkerAdmin(admin.ModelAdmin):
+    list_display = ('name', 'marker_type')
+    search_fields = ('name',)
 
-    population = queryset.first()
-    
-    # 1. Encontra o próximo número sequencial para o híbrido nesta população
-    last_hybrid = population.generated_hybrids.aggregate(
-        max_accession=Max('accession_code')
-    )
-    
-    next_num = 1
-    if last_hybrid['max_accession']:
-        try:
-            # Extrai o número depois de 'H' (ex: C1xL5A25H1 -> 1)
-            last_num_str = last_hybrid['max_accession'].split('H')[-1]
-            next_num = int(last_num_str) + 1
-        except (ValueError, IndexError):
-            # Fallback caso o formato do código seja inesperado
-            pass
+@admin.register(PhenologicalEvent)
+class PhenologicalEventAdmin(admin.ModelAdmin):
+    search_fields = ('name',)
 
-    # 2. Gera o código e o nome do novo híbrido
-    new_accession_code = f"{population.code}H{next_num}"
-    
-    # 3. Cria o novo material genético
-    new_hybrid = GeneticMaterial.objects.create(
-        name=new_accession_code, # Nome padrão
-        material_type=GeneticMaterial.MaterialType.HYBRID,
-        accession_code=new_accession_code,
-        population=population,
-        mother=population.parent1, # Assumindo parent1 como mãe, pode ser ajustado
-        father=population.parent2, # Assumindo parent2 como pai
-    )
-    
-    messages.success(
-        request,
-        f"Híbrido {new_hybrid.accession_code} criado com sucesso a partir da população {population.code}."
-    )
-
+@admin.register(PhenologyObservation)
+class PhenologyObservationAdmin(admin.ModelAdmin):
+    list_display = ('genetic_material', 'event', 'location', 'observation_date')
+    search_fields = ('genetic_material__name', 'event__name', 'location__name')
+    autocomplete_fields = ('genetic_material', 'location', 'event')
 
 @admin.register(Population)
 class PopulationAdmin(admin.ModelAdmin):
@@ -367,17 +396,9 @@ class PopulationAdmin(admin.ModelAdmin):
     readonly_fields = ('code',)
     actions = [promote_seedling_to_hybrid]
 
-# Registrando os novos modelos no admin
-@admin.register(Location)
-class LocationAdmin(admin.ModelAdmin):
-    search_fields = ('name', 'city', 'state')
-
-@admin.register(PhenologicalEvent)
-class PhenologicalEventAdmin(admin.ModelAdmin):
+@admin.register(S_Allele)
+class S_AlleleAdmin(admin.ModelAdmin):
+    list_display = ('name',)
     search_fields = ('name',)
-
-@admin.register(PhenologyObservation)
-class PhenologyObservationAdmin(admin.ModelAdmin):
-    list_display = ('genetic_material', 'event', 'location', 'observation_date')
-    search_fields = ('genetic_material__name', 'event__name', 'location__name')
-    autocomplete_fields = ('genetic_material', 'location', 'event')
+    autocomplete_fields = ('markers',)
+    inlines = [GeneticMaterialForSAllelesInline]
