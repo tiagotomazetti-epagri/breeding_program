@@ -224,7 +224,7 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
     
     actions = ['create_mutation_action', promote_to_selection, promote_to_cultivar]
 
-    fieldsets = (
+    base_fieldsets = (
         ('Identificação', {
             'fields': ('name', 'material_type')
         }),
@@ -249,8 +249,38 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
             'fields': ('is_active',)
         }),
     )
-
+    ifo_fieldset = (
+        ('Controle IFO', {
+            'fields': (
+                'ifo_sent', 'ifo_sent_date',
+                'ifo_quarantine_released',
+                'ifo_discarded', 'ifo_discarded_date'
+            ),
+            'classes': ('collapse',),
+            'description': 'Essa seção só está disponível para Seleções e Cultivares do programa da Epagri.'
+        }),
+    )
     readonly_fields = ('internal_code', 'accession_code')
+
+    def get_fieldsets(self, request, obj=None):
+        """
+        Exibe os fieldsets dinamicamente.
+        O quadro IFO só aparece para objetos existentes que atendem aos critérios.
+        """
+        fieldsets = list(self.base_fieldsets)
+
+        if obj:
+            is_epagri = obj.is_epagri_material
+            is_correct_type = obj.material_type in [
+                GeneticMaterial.MaterialType.SELECTION,
+                GeneticMaterial.MaterialType.CULTIVAR
+            ]
+
+            if is_epagri and is_correct_type:
+                fieldsets.append(*self.ifo_fieldset)
+                pass
+                
+        return tuple(fieldsets)
 
     def get_urls(self):
         """
@@ -364,6 +394,9 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
             'origin_material': origin_material,
         }
         return render(request, 'admin/germoplasm/create_mutation_form.html', context)
+
+    class Media:
+        js = ('germoplasm/js/ifo_logic.js',)
 
 @admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):

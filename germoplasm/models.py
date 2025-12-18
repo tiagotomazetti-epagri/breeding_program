@@ -201,6 +201,35 @@ class GeneticMaterial(BaseMaterial):
         help_text="Utilize este campo se necessário para adicionar informações uteis sobre o genótipo."
     )
 
+    ifo_sent = models.BooleanField(
+        default=False,
+        verbose_name="Envio para IFO",
+        help_text="Marque se este material foi enviado para a IFO."
+    )
+
+    ifo_sent_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Data de Envio para a IFO"
+    )
+
+    ifo_quarantine_released = models.BooleanField(
+        default=False,
+        verbose_name="Liberação da Quarentena IFO"
+    )
+
+    ifo_discarded = models.BooleanField(
+        default=False,
+        verbose_name="Descarte no IFO",
+        help_text="Marque se o material foi descartado durante o processo na IFO."
+    )
+
+    ifo_discarded_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Data de Descarte no IFO"
+    )
+
     def __str__(self) -> str:
         return f"{self.name} ({self.get_display_code()})"
     
