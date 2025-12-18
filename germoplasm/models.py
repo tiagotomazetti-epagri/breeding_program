@@ -385,6 +385,28 @@ class Location(models.Model):
     city = models.CharField(max_length=100, blank=True, verbose_name="Cidade")
     state = models.CharField(max_length=100, blank=True, verbose_name="Estado")
 
+    latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="Latitude"
+    )
+    longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        verbose_name="Longitude"
+    )
+    altitude = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Altitude (metros)"
+    )
+
     def __str__(self):
         return self.name
 
@@ -441,6 +463,44 @@ class PhenologyObservation(BaseMaterial):
         verbose_name = "Observação Fenológica"
         verbose_name_plural = "Observações Fenológicas"
         ordering = ['-observation_date']
+
+class Planting(BaseMaterial):
+    """
+    Represents a specific planting of a GeneticMaterial at a Location.
+    """
+    genetic_material = models.ForeignKey(
+        'GeneticMaterial',
+        on_delete=models.CASCADE,
+        related_name='plantings',
+        verbose_name="Material Genético"
+    )
+    location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        verbose_name="Local de Plantio"
+    )
+    num_plants = models.PositiveIntegerField(
+        default=1,
+        verbose_name="Número de Plantas"
+    )
+    planting_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Data de Plantio"
+    )
+    rootstock = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name="Porta-enxerto"
+    )
+
+    def __str__(self):
+        return f"{self.num_plants} Planta(s) de {self.genetic_material.name} em {self.location.name}."
+    
+    class Meta:
+        verbose_name = "Local de Plantio"
+        verbose_name_plural = "Locais de Plantio (Onde tem)"
+        ordering = ['location', '-planting_date']
 
 class Population(BaseMaterial):
     """
