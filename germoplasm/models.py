@@ -390,18 +390,16 @@ class Location(models.Model):
         decimal_places=6,
         null=True,
         blank=True,
-        verbose_name="Latitude"
+        verbose_name="Latitude (Decimal)"
     )
     longitude = models.DecimalField(
         max_digits=9,
         decimal_places=6,
         null=True,
         blank=True,
-        verbose_name="Longitude"
+        verbose_name="Longitude (Decimal)"
     )
-    altitude = models.DecimalField(
-        max_digits=7,
-        decimal_places=2,
+    altitude = models.IntegerField(
         null=True,
         blank=True,
         verbose_name="Altitude (metros)"

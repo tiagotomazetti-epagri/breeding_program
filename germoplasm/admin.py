@@ -15,10 +15,11 @@ from .models import (
     Marker,
     PhenologicalEvent,
     PhenologyObservation,
+    Planting,
     Population,
     S_Allele,
 )
-from .forms import MutationCreationForm
+from .forms import LocationAdminForm, MutationCreationForm
 from . import services
 
 class ChildrenAsFatherInline(admin.TabularInline):
@@ -94,7 +95,14 @@ class PhenologyObservationInline(admin.TabularInline):
     autocomplete_fields = ('location', 'event')
     verbose_name = "Observação Fenológica"
     verbose_name_plural = "Observações Fenológicas"
-    
+
+class PlantingInline(admin.TabularInline):
+    model = Planting
+    extra = 1
+    autocomplete_fields = ('location',)
+    verbose_name = "Local de Plantio"
+    verbose_name_plural = "Locais de Plantio (Onde Tem)"
+
 class SeplanSearchFilter(admin.SimpleListFilter):
 
     title = _('Código Seplan')
@@ -215,7 +223,8 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
     
     inlines = [
         GeneticMaterialPhotoInline,
-        PhenologyObservationInline, 
+        PhenologyObservationInline,
+        PlantingInline,
         DiseaseReactionInline,
         ChildrenAsMotherInline,
         ChildrenAsFatherInline,
@@ -400,7 +409,30 @@ class GeneticMaterialAdmin(admin.ModelAdmin):
 
 @admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):
+    form = LocationAdminForm
+
+    list_display = ('name', 'city', 'state', 'latitude', 'longitude')
     search_fields = ('name', 'city', 'state')
+
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'city', 'state')
+        }),
+        ('Coordenadas Geográficas (DMS)', {
+            'fields': (
+                ('lat_degrees', 'lat_minutes', 'lat_seconds', 'lat_direction'),
+                ('lon_degrees', 'lon_minutes', 'lon_seconds', 'lon_direction'),
+                'altitude'
+            ),
+            'classes': ('collapse',),
+            'description': 'Insira as coordenadas em Graus, Minutos e Segundos.'
+        }),
+        ('Coordenadas (Decimal - Somente Leitura)', {
+            'fields': ('latitude', 'longitude'),
+            'classes': ('collapse',)
+        }),
+    )
+    readonly_fields = ('latitude', 'longitude')
 
 @admin.register(Marker)
 class MarkerAdmin(admin.ModelAdmin):
